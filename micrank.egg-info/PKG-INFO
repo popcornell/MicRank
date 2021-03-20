@@ -1,0 +1,11 @@
+Metadata-Version: 1.2
+Name: micrank
+Version: 0.1.0
+Summary: Sound Event Detection and Separation in Domestic Environments.
+Home-page: UNKNOWN
+Author: DCASE2021 Task 4 Organizers
+Author-email: cornellsamuele@gmail.com
+License: MIT
+Description: UNKNOWN
+Platform: UNKNOWN
+Requires-Python: >=3.8

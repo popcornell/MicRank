@@ -1,0 +1,58 @@
+training:
+  batch_size: 1
+  batch_size_val: 1
+  num_workers: 12 # change according to your cpu
+  n_epochs: 200 # max num epochs
+  early_stop_patience: 10 # Same as number of epochs by default, so no early stopping used
+  accumulate_batches: 16
+  gradient_clip: 0 # 0 no gradient clipping
+  backend:
+  validation_interval: 1 # perform validation every X epoch, 1 default
+  seed: 42
+  delta_wer: 0.05
+  discard_shorter: 32000
+  sorted: random
+  rankscore: nwer
+  ranking: listwise
+  loss: listnet
+scheduler:
+  factor: 0.5
+  patience: 5
+scaler:
+  statistic: dataset # instance or dataset-wide statistic
+  normtype: standard # minmax or standard or mean normalization
+  dims: [0, 1, 3] # dimensions over which normalization is applied
+  savepath: ./scaler.ckpt # path to scaler checkpoint
+data: # change with your paths if different.
+  train_json: ./parsed/dev.json
+  dev_json: ./parsed/test.json
+  test_json: ./parsed/test.json
+  fs: 16000
+opt:
+  lr: 0.00015
+  betas: [0.9, 0.999]
+  weight_decay: !!float 1e-6
+feats_type: fbank
+fbank:
+  n_mels: 40
+  power: 1
+  sample_rate: 16000
+tcn:
+  in_chan: 40
+  dropout: 0.2
+crnn:
+  dropout: 0.5
+  rnn_layers: 2
+  n_in_channel: 1
+  nclass: 1
+  attention: True
+  n_RNN_cell: 128
+  activation: glu
+  rnn_type: BGRU
+  kernel_size: [ 3, 3, 3, 3, 3, 3, 3 ]
+  padding: [ 1, 1, 1, 1, 1, 1, 1 ]
+  stride: [ 1, 1, 1, 1, 1, 1, 2 ]
+  nb_filters: [ 16, 32, 64, 128, 128, 128, 128 ]
+  pooling: [ [ 2, 2 ], [ 2, 2 ], [ 1, 2 ], [ 1, 2 ], [ 1, 1 ], [ 1, 1 ], [ 1, 1 ] ]
+  dropout_recurrent: 0
+  normalization: layer
