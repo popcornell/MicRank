@@ -2,9 +2,9 @@ training:
   batch_size: 1
   batch_size_val: 1
   num_workers: 12 # change according to your cpu
-  n_epochs: 1 # max num epochs
+  n_epochs: 2 # max num epochs
   early_stop_patience: 10 # Same as number of epochs by default, so no early stopping used
-  accumulate_batches: 1
+  accumulate_batches: 256
   gradient_clip: 0 # 0 no gradient clipping
   backend:
   validation_interval: 1 # perform validation every X epoch, 1 default
@@ -14,7 +14,8 @@ training:
   sorted: random
   rankscore: nwer
   ranking: listwise
-  loss: xentropy
+  loss: listnet
+  save_selected: True
 scheduler:
   factor: 0.5
   patience: 5
@@ -24,15 +25,15 @@ scaler:
   dims: [0, 1, 2, 3] # dimensions over which normalization is applied
   savepath: # path to scaler checkpoint
 data: # change with your paths if different.
-  train_json: ./parsed_chime6/train.json
-  dev_json: ./parsed_chime6/dev.json
-  test_json: ./parsed_chime6/eval.json
+  train_json: ./parsed_chime6/dev.json
+  dev_json: ./parsed_chime6/eval.json
+  test_json: ./parsed_chime6/dev.json
   fs: 16000
 opt:
-  lr: 0.00015
-  betas: [0.9, 0.999]
+  lr: !!float 1e-4
+  #betas: [0.9, 0.999]
   #weight_decay: !!float 1e-7
-feats_type: waveform
+feats_type: fbank
 fbank:
   n_mels: 64
   power: 1
@@ -44,6 +45,7 @@ tcn:
   dropout: 0.1
   bn_chan: 64
   hid_chan: 128
+  n_blocks: 6
 crnn:
   dropout: 0.5
   rnn_layers: 2
@@ -63,5 +65,5 @@ crnn:
 augmentation:
   rolling: True
   specaugm:
-    freqs:
-    time:
+    freqs: 4
+    time: 2

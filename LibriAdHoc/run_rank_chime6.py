@@ -18,9 +18,9 @@ import torch
 from micrank.metrics import compute_nwer, compute_wer
 
 parser = argparse.ArgumentParser("Training a MicRank system for LibriAdhoc dataset")
-parser.add_argument("--conf_file", default="./confs/chime6.yaml",
+parser.add_argument("--conf_file", default="./confs/ev.yaml",
                     help="The configuration file with all the experiment parameters.")
-parser.add_argument("--log_dir", default="./exp_chime6/cs",
+parser.add_argument("--log_dir", default="./exp_chime6/cd_corrected",
                     help="Directory where to save tensorboard logs, saved models, etc.")
 parser.add_argument("--resume_from_checkpoint", default=None,
                     help="Allow the training to be resumed, take as input a previously saved model (.ckpt).")

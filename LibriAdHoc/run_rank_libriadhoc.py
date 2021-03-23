@@ -19,7 +19,7 @@ from micrank.metrics import compute_nwer, compute_wer
 parser = argparse.ArgumentParser("Training a MicRank system for LibriAdhoc dataset")
 parser.add_argument("--conf_file", default="./confs/libriadhoc.yaml",
                     help="The configuration file with all the experiment parameters.")
-parser.add_argument("--log_dir", default="./exp/rank",
+parser.add_argument("--log_dir", default="./exp/tcn",
                     help="Directory where to save tensorboard logs, saved models, etc.")
 parser.add_argument("--resume_from_checkpoint", default=None,
                     help="Allow the training to be resumed, take as input a previously saved model (.ckpt).")
@@ -94,18 +94,21 @@ def get_datasets(hparams):
         raise NotImplementedError
 
     @sb.utils.data_pipeline.takes("channels")
-    @sb.utils.data_pipeline.provides("csid")
+    @sb.utils.data_pipeline.provides("csid", "file_ids")
     def csid_pipeline(channels):
+        file_ids = []
         csid = []
         for ch in channels:
             csid.append(ch["csid"])
-        return csid
+            file_ids.append("dummy")
+        yield csid
+        yield file_ids
 
     sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], audio_pipeline)
     sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], targets_pipeline)
     sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], csid_pipeline)
 
-    sb.dataio.dataset.set_output_keys([train_set, dev_set, test_set], ["id", "audio", "scores", "csid", "n_words"])
+    sb.dataio.dataset.set_output_keys([train_set, dev_set, test_set], ["id", "audio", "scores", "csid", "n_words", "file_ids"])
 
     return train_set, dev_set, test_set
 
@@ -138,11 +141,12 @@ def single_run(
     from micrank.rankers.TCN import TCN
     from micrank.rankers.transformer import Transformer_SC
     from micrank.rankers.CRNN import CRNN
+    from micrank.rankers.dsp_selection import EnvelopeVariance, CepstralDistance
 
-    ranker = TCN(**config["tcn"]) #CRNN(**config["crnn"])
+    ranker = TCN(**config["tcn"])#CRNN(**config["crnn"])
 
     if test_state_dict is None:
-        opt = torch.optim.Adam(ranker.parameters(), **config["opt"])
+        opt = torch.optim.SGD(ranker.parameters(), **config["opt"])
 
         logger = TensorBoardLogger(
             os.path.dirname(config["log_dir"]), config["log_dir"].split("/")[-1],

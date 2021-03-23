@@ -46,7 +46,7 @@ def parse_examples(per_utt_file, audio_dir, json_file):
                                   "length": (int(stop) - int(start))*160,
                                   "session": session,
                                   "tag": tag,
-                                   "start": int(start)*160, "stop": int(stop)*160,
+                                   "s_start": int(start)*160, "s_stop": int(stop)*160,
                                   "speaker": speaker,
                                   "channels": [{"audio_file": audio_file, "channel": device + "." + channel, "csid": csid, "id": l.split(" ")[0]}]}
 

@@ -6,18 +6,22 @@ class EnvelopeVariance(torch.nn.Module):
        super(EnvelopeVariance, self).__init__()
        self.mels = torchaudio.transforms.MelSpectrogram(sample_rate=samplerate,
                                                         n_fft=n_fft,
-                                                        hop_length=hop_length, n_mels=n_mels, power=1)
+                                                        hop_length=hop_length, n_mels=n_mels, power=2)
        self.eps = eps
-       self.subband_weights = torch.nn.Parameter(torch.randn(n_mels))
+       self.subband_weights = torch.nn.Parameter(torch.ones(n_mels))
 
    def forward(self, channels):
+       assert channels.ndim == 3
        mels = self.mels(channels)
+
        logmels = torch.log(mels + self.eps)
        mels = torch.exp(logmels - torch.mean(logmels, -1, keepdim=True))
+
        var = torch.var(mels ** (1 / 3), dim=-1)
        # channels, subbands
        var = var / torch.amax(var, 1, keepdim=True)
        subband_weights = torch.abs(self.subband_weights)
+
        ranking = torch.sum(var*subband_weights, -1)
        return ranking
 
@@ -33,6 +37,7 @@ class CepstralDistance(torch.nn.Module):
         self.ceps_weights = torch.nn.Parameter(torch.rand(n_ceps -1))
 
     def from_oracle(self, channels, close_talk):
+        assert channels.ndim == 3
         # b, chans, frames = channels.shape
         magspec = self.spectrum(channels)
         reference = torch.log(self.spectrum(close_talk) + self.eps)
@@ -42,11 +47,12 @@ class CepstralDistance(torch.nn.Module):
 
         pairwise_dists = cep_all[:, :, 1:] - cep_ref[:, 1:].unsqueeze(1)  # discard DC coefficient
         ceps_weights = torch.abs(self.ceps_weights)
-        pairwise_dists = torch.sum(ceps_weights * torch.sum(pairwise_dists ** 2, -1), -1)
+        pairwise_dists = (2*torch.sum(ceps_weights * torch.sum(pairwise_dists ** 2, -1), -1))**0.5
 
         return pairwise_dists  # batch, channels
 
     def forward(self, channels):
+        assert channels.ndim == 3
         #b, chans, frames = channels.shape
         magspec = self.spectrum(channels)
         reference = torch.mean(torch.log(magspec + self.eps), 1)

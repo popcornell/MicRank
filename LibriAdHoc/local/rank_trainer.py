@@ -25,11 +25,13 @@ class MicRank(pl.LightningModule):
             self.num_workers = self.hparams["training"]["num_workers"]
 
         if self.hparams["training"]["loss"] == "listnet":
-            from micrank.losses.listNet import AdaptiveTopKListNet
-            self.loss = lambda x, y: AdaptiveTopKListNet(x, y, 4)
+            from micrank.losses.listNet import listNet
+            self.loss = lambda x, y: listNet(x, y)
         elif self.hparams["training"]["loss"] == "xentropy":
-            xentropy = torch.nn.CrossEntropyLoss()
-            self.loss = lambda x, y: xentropy(x, torch.argmax(y, -1))
+            self.loss = lambda x, y: (-(torch.log_softmax(x, -1)*y).sum() / x.shape[0])
+        elif  self.hparams["training"]["loss"] == "mse":
+            mseloss = torch.nn.MSELoss()
+            self.loss = lambda x, y: mseloss(x, y)
         else:
             raise NotImplemented
 
@@ -43,8 +45,6 @@ class MicRank(pl.LightningModule):
     def extract_features(self, audio_tensor):
 
         if self.hparams["feats_type"] == "fbank":
-
-
 
             melspectra = torchaudio.transforms.MelSpectrogram(**self.hparams["fbank"]).to(audio_tensor)
             mels = melspectra(audio_tensor)
@@ -62,7 +62,7 @@ class MicRank(pl.LightningModule):
                     self.hparams["augmentation"]["specaugm"]["freqs"], False)
                 logmels = self.mask_freq(logmels)
 
-            if self.hparams["augmentation"]["specaugm"]["freqs"] is not None:
+            if self.hparams["augmentation"]["specaugm"]["time"] is not None:
                 self.time_mask = torchaudio.transforms.FrequencyMasking(self.hparams["augmentation"]["specaugm"]["time"], False)
                 logmels = self.time_mask(logmels)
 
@@ -201,22 +201,23 @@ class MicRank(pl.LightningModule):
 
         return loss
 
-
     def on_validation_epoch_end(self, **kwargs):
 
         # compute
-        wer_val, selected_val = self.compute_wer_all(self.buffer_sel_val)
+        wer_val,  selected_val = self.compute_wer_all(self.buffer_sel_val)
 
-        out_dir = os.path.join(self.logger.log_dir, "dev")
-        os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, "selected"), "w") as f:
-            for c_sel in selected_val:
-                start = c_sel.split(" ")[0].split("-")[1]
-                stop = c_sel.split(" ")[0].split("-")[-1]
-                session = c_sel.split(" ")[0].split("_")[1]
-                device = c_sel.split(" ")[0].split("_")[2].split(".")[0]
-                channel = c_sel.split(" ")[0].split("_")[2].split(".")[1]
-                f.write("{} {} {} {}\n".format(c_sel, session + "_" + device + "." + channel, int(start)/100, int(stop)/100))
+        if self.hparams["training"]["save_selected"]:
+            out_dir = os.path.join(self.logger.log_dir, "dev")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, "selected"), "w") as f:
+                for c_sel in selected_val:
+                    speaker = c_sel.split("_")[0]
+                    start = c_sel.split(" ")[0].split("-")[1]
+                    stop = c_sel.split(" ")[0].split("-")[-1]
+                    session = c_sel.split(" ")[0].split("_")[1]
+                    device = c_sel.split(" ")[0].split("_")[2].split(".")[0]
+                    channel = c_sel.split(" ")[0].split("_")[2].split(".")[1]
+                    f.write("{}_{}-{}-{} {}_{}.{} {} {}\n".format(speaker, session, start, stop, session, device, channel, int(start)/100, int(stop)/100))
 
         self.log("val/wer", wer_val, prog_bar=True)
 
@@ -260,19 +261,23 @@ class MicRank(pl.LightningModule):
 
         wer_test, selected_test = self.compute_wer_all(self.buffer_sel_test)
 
-        out_dir = os.path.join(self.logger.log_dir, "eval")
-        os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, "selected"), "w") as f:
-            for c_sel in selected_test:
-                start = c_sel.split(" ")[0].split("-")[1]
-                stop = c_sel.split(" ")[0].split("-")[-1]
-                session = c_sel.split(" ")[0].split("_")[1]
-                device = c_sel.split(" ")[0].split("_")[2].split(".")[0]
-                channel = c_sel.split(" ")[0].split("_")[2].split(".")[1]
-                f.write("{} {} {} {}\n".format(c_sel, session + "_" + device + "." + channel, int(start) / 100,
-                                               int(stop) / 100))
+        if self.hparams["training"]["save_selected"]:
 
-        self.log("val/wer", wer_test)
+            out_dir = os.path.join(self.logger.log_dir, "eval")
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, "selected"), "w") as f:
+                for c_sel in selected_test:
+                    speaker = c_sel.split("_")[0]
+                    start = c_sel.split(" ")[0].split("-")[1]
+                    stop = c_sel.split(" ")[0].split("-")[-1]
+                    session = c_sel.split(" ")[0].split("_")[1]
+                    device = c_sel.split(" ")[0].split("_")[2].split(".")[0]
+                    channel = c_sel.split(" ")[0].split("_")[2].split(".")[1]
+                    f.write(
+                        "{}_{}-{}-{} {}_{}.{} {} {}\n".format(speaker, session, start, stop, session, device, channel,
+                                                              int(start) / 100, int(stop) / 100))
+
+        self.log("test/wer", wer_test)
         self.log("hp_metric", wer_test)
 
 
@@ -281,11 +286,11 @@ class MicRank(pl.LightningModule):
         return [self.opt], [self.scheduler]
 
     def train_dataloader(self):
-
+        shuffle = True if self.hparams["training"]["sorted"] == "random" else False
         self.train_loader = torch.utils.data.DataLoader(
             self.train_data,
             batch_size=self.hparams["training"]["batch_size"],
-            num_workers=self.num_workers,
+            num_workers=self.num_workers, shuffle=shuffle,
             collate_fn=PaddedBatch, worker_init_fn=lambda x: np.random.seed(
             int.from_bytes(os.urandom(4), "little") + x
         )
