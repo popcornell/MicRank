@@ -152,6 +152,7 @@ def single_run(
     ##### Model Definition  ############
     from micrank.rankers.TCN import TCN
     from micrank.rankers.transformer import Transformer_SC
+    #Transformer_SC(40, embed_dim=256, n_layers=2)
     from micrank.rankers.CRNN import CRNN
     from micrank.rankers.dsp_selection import EnvelopeVariance, CepstralDistance
     ranker = CepstralDistance() #TCN(**config["tcn"]) #CRNN(**config["crnn"])

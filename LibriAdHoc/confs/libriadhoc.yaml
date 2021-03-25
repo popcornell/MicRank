@@ -2,15 +2,16 @@ training:
   batch_size: 1
   batch_size_val: 1
   num_workers: 12 # change according to your cpu
-  n_epochs: 1 # max num epochs
+  n_epochs: 100 # max num epochs
   early_stop_patience: 10 # Same as number of epochs by default, so no early stopping used
   accumulate_batches: 1
-  gradient_clip: 0 # 0 no gradient clipping
+  gradient_clip: 5 # 0 no gradient clipping
   backend:
   validation_interval: 1 # perform validation every X epoch, 1 default
   seed: 42
   delta_wer: 0.01
-  discard_shorter: 32000
+  discard_shorter: 8000
+  chunk: False
   sorted: random
   rankscore: nwer
   ranking: listwise
@@ -21,8 +22,8 @@ scheduler:
   patience: 5
 scaler:
   statistic: instance # instance or dataset-wide statistic
-  normtype:   # minmax or standard or mean normalization
-  dims: [0, 1, 2, 3] # dimensions over which normalization is applied
+  normtype:  minmax #or standard or mean normalization
+  dims: [1, 2] # dimensions over which normalization is applied
   savepath: # path to scaler checkpoint
 data: # change with your paths if different.
   train_json: ./parsed/train.json
@@ -30,22 +31,23 @@ data: # change with your paths if different.
   test_json: ./parsed/test.json
   fs: 16000
 opt:
-  lr: 0.00015
-  betas: [0.9, 0.999]
+  lr: !!float 1e-4
+  #betas: [0.9, 0.999]
+  #momentum: 0.9
   #weight_decay: !!float 1e-7
 feats_type: fbank
 fbank:
-  n_mels: 64
-  power: 1
+  n_mels: 40
+  power: 2
   sample_rate: 16000
   n_fft: 400
   hop_length: 200
 tcn:
-  in_chan: 64
-  dropout: 0.1
-  bn_chan: 128
-  hid_chan: 256
-  n_blocks: 6
+  in_chan: 40
+  dropout: 0.0
+  bn_chan: 64
+  hid_chan: 128
+  n_blocks: 5
 crnn:
   dropout: 0.5
   rnn_layers: 2
@@ -63,7 +65,9 @@ crnn:
   dropout_recurrent: 0
   normalization: layer
 augmentation:
-  rolling: False
+  speed: True
+  shift: True
   specaugm:
-    freqs:
-    time:
+    freqs: 4
+    time: 4
+

@@ -15,6 +15,7 @@ from speechbrain.dataio.dataset import DynamicItemDataset
 import torchaudio
 import torch
 from micrank.metrics import compute_nwer, compute_wer
+from speechbrain.processing.speech_augmentation import SpeedPerturb
 
 parser = argparse.ArgumentParser("Training a MicRank system for LibriAdhoc dataset")
 parser.add_argument("--conf_file", default="./confs/libriadhoc.yaml",
@@ -68,16 +69,28 @@ def get_datasets(hparams):
     else:
         raise NotImplementedError
 
+
     # 2. Define audio pipeline:
+    @sb.utils.data_pipeline.takes("audio_file", "length")
+    @sb.utils.data_pipeline.provides("audio")
+    def audio_pipeline_train(wav, length):
+        if configs["training"]["chunk"]:
+            offset = np.random.randint(0, length-configs["training"]["chunk"])
+            sig, fs = torchaudio.load(wav, frame_offset=offset, num_frames=configs["training"]["chunk"])
+        else:
+            sig, fs = torchaudio.load(wav)
+
+            if configs["augmentation"]["speed"]:
+            perturbator = SpeedPerturb(fs, speeds=[x for x in range(90, 110, 10)])
+            sig = perturbator(sig)
+        # we do shift augmentation
+        return sig
+
     @sb.utils.data_pipeline.takes("audio_file")
     @sb.utils.data_pipeline.provides("audio")
-    def audio_pipeline(wav):
+    def audio_pipeline_test(wav):
         sig, fs = torchaudio.load(wav)
         # we do shift augmentation
-        for ch in range(sig.shape[0]):
-            rolling = np.random.randint(0, sig.shape[-1])
-            sig[ch] = torch.roll(sig[ch], rolling, dims=0)
-
         return sig
 
     if hparams["training"]["rankscore"] == "nwer":
@@ -89,7 +102,8 @@ def get_datasets(hparams):
                 nwer = compute_nwer(ch["csid"][1], ch["csid"][-1], ch["csid"][-2],  n_words)
                 targets.append(nwer)
 
-            return torch.Tensor(targets).float()
+            targets = torch.Tensor(targets).float()
+            return targets
     else:
         raise NotImplementedError
 
@@ -104,7 +118,8 @@ def get_datasets(hparams):
         yield csid
         yield file_ids
 
-    sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], audio_pipeline)
+    sb.dataio.dataset.add_dynamic_item([train_set], audio_pipeline_train)
+    sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], audio_pipeline_test)
     sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], targets_pipeline)
     sb.dataio.dataset.add_dynamic_item([train_set, dev_set, test_set], csid_pipeline)
 
@@ -143,10 +158,10 @@ def single_run(
     from micrank.rankers.CRNN import CRNN
     from micrank.rankers.dsp_selection import EnvelopeVariance, CepstralDistance
 
-    ranker = TCN(**config["tcn"])#CRNN(**config["crnn"])
+    ranker = Transformer_SC(64, embed_dim=384, n_layers=2, dropout=0.1)  #TCN(**config["tcn"])#CRNN(**config["crnn"])
 
     if test_state_dict is None:
-        opt = torch.optim.SGD(ranker.parameters(), **config["opt"])
+        opt = torch.optim.Adam(ranker.parameters(), **config["opt"])
 
         logger = TensorBoardLogger(
             os.path.dirname(config["log_dir"]), config["log_dir"].split("/")[-1],

@@ -12,6 +12,7 @@ from scipy.ndimage import shift
 from micrank.rankers.dsp_selection import CepstralDistance
 import torch
 from local.align import phase_align
+import pandas as pd
 
 parser = argparse.ArgumentParser("Getting Oracle Ranking")
 parser.add_argument("--json_file")
@@ -71,23 +72,24 @@ def get_signal_based_metric(audio_file, librispeech, metadata_channel, metric, a
     return metrics[metric]
 
 
-def rank(json_file, librispeech_dir, selection_method):
+def rank(json_file, librispeech_dir, selection_method, out_file):
 
     with open(json_file, "r") as f:
         utterances = json.load(f)
 
-    min_csid = []
-    c = 0
+    dataframe = []
+
     for id in tqdm.tqdm(utterances.keys()):
-        if c == 100:
-            break
+
 
         n_words = utterances[id]["n_words"]
         scores = []
+        CSIDs = []
         for ch in range(len(utterances[id]["channels"])):
             channels_data = utterances[id]["channels"]
             c_csid = channels_data[ch]["csid"]
-            c_id = channels_data[ch]["id"]
+
+            CSIDs.append(c_csid)
 
             if selection_method == "wer":
                 c_wer = compute_wer(c_csid[1], c_csid[-1], c_csid[-2], n_words)
@@ -171,26 +173,75 @@ def rank(json_file, librispeech_dir, selection_method):
                 scores.append(entropy)
 
 
-        if selection_method in ["wer", "distance_spk", "rev_noise_energy", "cs_informed", "entropy_dnn"]:
-            best_indx = np.argmin(scores)
-        elif selection_method in ["sisdr_clean", "sisdr_rev", "sisdr_clean_a",
-                                  "sdr_clean", "sdr_rev",
+        #if selection_method in ["wer", "distance_spk", "rev_noise_energy", "cs_informed", "entropy_dnn"]:
+        #    best_indx = np.argmin(scores)
+        #elif selection_method in ["sisdr_clean", "sisdr_rev", "sisdr_clean_a",
+         #                         "sdr_clean", "sdr_rev",
+         #                         "pesq_clean_a", "pesq_clean", "pesq_rev",
+         #                         "stoi_clean_a", "stoi_clean", "stoi_rev",
+         #                         "distance_noise",
+         #                         "random",
+          #                        "rev_spk_energy"]:
+          #  best_indx = np.argmax(scores)
+        current = {"scores": [(x, y) for x, y in zip(scores, CSIDs)]}
+        dataframe.append(current)
+
+    with open(out_file, "w") as f:
+        json.dump(dataframe, f, indent=4)
+    #oracle_wer, selected = MicRank.compute_wer_all(min_csid)
+
+
+if __name__ == "__main__":
+    np.random.seed(42)
+
+    json_utterances = "./parsed/test.json"
+    librispeech_root = "/media/samco/Data/LibriSpeech/"
+
+    out_dir = "./oracle_libriadhoc_test"
+    os.makedirs(out_dir, exist_ok=True)
+
+    #"wer", "distance_spk", "rev_noise_energy", "cs_informed", "sisdr_clean", "sisdr_rev", "sisdr_clean_a",
+                             #    "sdr_clean", "sdr_rev",
+                              #    "pesq_clean_a",
+
+    for ranking_metric in [# "wer", "distance_spk", "rev_noise_energy", "cs_informed", "sisdr_clean", "sisdr_rev", "sisdr_clean_a",
+                                 "sdr_clean", "sdr_rev",
                                   "pesq_clean_a", "pesq_clean", "pesq_rev",
                                   "stoi_clean_a", "stoi_clean", "stoi_rev",
                                   "distance_noise",
                                   "random",
                                   "rev_spk_energy"]:
-            best_indx = np.argmax(scores)
+        out_file = os.path.join(out_dir, ranking_metric + ".json")
+        rank(json_utterances, librispeech_root, ranking_metric, out_file)
+        with open(out_file, "r") as f:
+            scores = json.load(f)
 
-        min_csid.append([channels_data[best_indx]["csid"], n_words, c_id])
+        all_csid = [] # we keep a list for all csids
 
-    oracle_wer, selected = MicRank.compute_wer_all(min_csid)
-    print("Oracle WER {} file {} method {}".format(oracle_wer, json_file, selection_method))
+        for f in range(len(scores)):
+            if ranking_metric in ["wer", "distance_spk", "rev_noise_energy", "cs_informed", "entropy_dnn"]:
+                sorted_scores = sorted(scores[f]["scores"], key=lambda x: x[0])
+            elif ranking_metric in ["sisdr_clean", "sisdr_rev", "sisdr_clean_a",
+                                 "sdr_clean", "sdr_rev",
+                                  "pesq_clean_a", "pesq_clean", "pesq_rev",
+                                  "stoi_clean_a", "stoi_clean", "stoi_rev",
+                                  "distance_noise",
+                                  "random",
+                                  "rev_spk_energy"]:
+                sorted_scores = sorted(scores[f]["scores"], key=lambda x: x[0], reverse=True)
+            else:
+                raise NotImplementedError
+            all_csid.append([x[-1] for x in sorted_scores])
 
-if __name__ == "__main__":
-    np.random.seed(42)
+        # compute wer for all
+        # print wer to txt file
+        all_csid = np.sum(np.array(all_csid), 0)
+        wers = [compute_wer(all_csid[r][1],all_csid[r][-1], all_csid[r][-2], np.sum(all_csid[r])) for r in range(len(all_csid))]
+        with open(os.path.join(out_dir, ranking_metric + "_tot_wers.json"), "w") as f:
+            json.dump(wers, f, indent=4)
 
-    rank("/media/samco/Data/MicRank/LibriAdHoc/parsed/test.json", "/media/samco/Data/LibriSpeech/", "entropy_dnn")
+
+
 
 
 

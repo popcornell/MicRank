@@ -27,6 +27,9 @@ class MicRank(pl.LightningModule):
         if self.hparams["training"]["loss"] == "listnet":
             from micrank.losses.listNet import listNet
             self.loss = lambda x, y: listNet(x, y)
+        elif self.hparams["training"]["loss"] == "topklistnet":
+            from micrank.losses.listNet import AdaptiveTopKListNet
+            self.loss = lambda x, y: AdaptiveTopKListNet(x, y)
         elif self.hparams["training"]["loss"] == "xentropy":
             self.loss = lambda x, y: (-(torch.log_softmax(x, -1)*y).sum() / x.shape[0])
         elif  self.hparams["training"]["loss"] == "mse":
@@ -58,13 +61,22 @@ class MicRank(pl.LightningModule):
             logmels = logmels.reshape(batch*mics, mels, frames)
 
             if self.hparams["augmentation"]["specaugm"]["freqs"] is not None:
-                self.mask_freq = torchaudio.transforms.FrequencyMasking(
+                mask_freq = torchaudio.transforms.FrequencyMasking(
                     self.hparams["augmentation"]["specaugm"]["freqs"], False)
-                logmels = self.mask_freq(logmels)
+                logmels = mask_freq(logmels)
 
             if self.hparams["augmentation"]["specaugm"]["time"] is not None:
-                self.time_mask = torchaudio.transforms.FrequencyMasking(self.hparams["augmentation"]["specaugm"]["time"], False)
-                logmels = self.time_mask(logmels)
+                time_mask = torchaudio.transforms.FrequencyMasking(self.hparams["augmentation"]["specaugm"]["time"], False)
+                logmels = time_mask(logmels)
+
+            if self.hparams["augmentation"]["specaugm"]["shift"] is not None:
+                for b in range(logmels.shape[0]):
+                    for ch in range(logmels.shape[1]):
+                        rolling = np.random.randint(0, logmels.shape[-1])
+                        logmels[b, ch] = torch.roll(logmels[b, ch], rolling, dims=-1)
+                #speed = torchaudio.transforms.TimeStretch(self.hparams["augmentation"]["specaugm"]["speed"], logmels.shape[1])
+                #rate = np.random.uniform(0.95, 1.05)
+                #logmels = speed(logmels, rate)
 
             return logmels.reshape(batch, mics, mels, frames)
 
@@ -141,9 +153,7 @@ class MicRank(pl.LightningModule):
         feats = self.scaler(self.extract_features(audio))
 
         if self.hparams["training"]["ranking"] in ["listwise", "pointwise"]:
-
             est = self.ranker(feats)
-
             loss = self.loss(est, scores)
             est_best = torch.argmax(est, -1)
         else:
@@ -152,7 +162,7 @@ class MicRank(pl.LightningModule):
         with torch.no_grad():
             for b in range(audio.shape[0]):
                 best_indx = est_best[b].item()
-                self.buffer_sel_train.append([csid[b][best_indx], batch.n_words[b].item(), batch.file_ids[b][best_indx]])
+                self.buffer_sel_train.append([csid[b], batch.n_words[b].item(), batch.file_ids[b][best_indx]])
 
         self.log("train/loss", loss, prog_bar=True)
 
@@ -180,6 +190,7 @@ class MicRank(pl.LightningModule):
         csid = batch.csid
 
         feats = self.scaler(self.extract_features(audio))
+        # for validation set we save all scores
 
         if self.hparams["training"]["ranking"] in ["listwise", "pointwise"]:
             est = self.ranker(feats)
@@ -187,15 +198,15 @@ class MicRank(pl.LightningModule):
                 loss = self.loss(est, scores)
             else:
                 loss = 0
-            est_best = torch.argmax(est, -1)
+                # chime6 has some utterances with 0 words we ignore them here
+            #est_best = torch.argmax(est, -1)
         else:
             raise NotImplementedError
 
         for b in range(audio.shape[0]):
 
-            best_indx = est_best[b].item()
-
-            self.buffer_sel_val.append([csid[b][best_indx], batch.n_words[b].item(), batch.file_ids[b][best_indx]])
+            score = est[b].item()
+            self.buffer_sel_val.append([score, csid[b], batch.n_words[b].item(), batch.file_ids[b]])
 
         self.log("val/loss", loss, prog_bar=True)
 
@@ -204,7 +215,7 @@ class MicRank(pl.LightningModule):
     def on_validation_epoch_end(self, **kwargs):
 
         # compute
-        wer_val,  selected_val = self.compute_wer_all(self.buffer_sel_val)
+        wer_best,  wer_top_3_avg = self.compute_wer_all(self.buffer_sel_val)
 
         if self.hparams["training"]["save_selected"]:
             out_dir = os.path.join(self.logger.log_dir, "dev")

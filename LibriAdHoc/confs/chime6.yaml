@@ -67,3 +67,4 @@ augmentation:
   specaugm:
     freqs: 4
     time: 2
+    speed: True
