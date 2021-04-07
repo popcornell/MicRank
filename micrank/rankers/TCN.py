@@ -4,50 +4,7 @@ import torch
 import math
 from asteroid_filterbanks import make_enc_dec
 from asteroid_filterbanks.transforms import take_mag
-import torchaudio
-from asteroid
-
-class Conv1DBlock(nn.Module):
-    """One dimensional convolutional block, as proposed in [1].
-    Args:
-        in_chan (int): Number of input channels.
-        hid_chan (int): Number of hidden channels in the depth-wise
-            convolution.
-        skip_out_chan (int): Number of channels in the skip convolution.
-        kernel_size (int): Size of the depth-wise convolutional kernel.
-        padding (int): Padding of the depth-wise convolution.
-        dilation (int): Dilation of the depth-wise convolution.
-        norm_type (str, optional): Type of normalization to use. To choose from
-            -  ``'gLN'``: global Layernorm
-            -  ``'cLN'``: channelwise Layernorm
-            -  ``'cgLN'``: cumulative global Layernorm
-    References:
-        [1] : "Conv-TasNet: Surpassing ideal time-frequency magnitude masking
-        for speech separation" TASLP 2019 Yi Luo, Nima Mesgarani
-        https://arxiv.org/abs/1809.07454
-    """
-    def __init__(self, in_chan, hid_chan, kernel_size, padding,
-                 dilation, norm_type="bN", dropout=0.0):
-        super(Conv1DBlock, self).__init__()
-        conv_norm = norms.get(norm_type)
-
-
-        in_bottle = in_chan
-        in_conv1d = nn.Conv1d(in_bottle, hid_chan, 1)
-        depth_conv1d = nn.Conv1d(hid_chan, hid_chan, kernel_size,
-                                 padding=padding, dilation=dilation,
-                                 groups=hid_chan)
-        self.shared_block = nn.Sequential(in_conv1d, nn.PReLU(),
-                                          conv_norm(hid_chan), depth_conv1d,
-                                          nn.PReLU(), nn.Dropout(dropout), conv_norm(hid_chan))
-        self.res_conv = nn.Conv1d(hid_chan, in_chan, 1)
-
-    def forward(self, x):
-        """ Input shape [batch, feats, seq]"""
-
-        shared_out = self.shared_block(x)
-        res_out = self.res_conv(shared_out)
-        return res_out
+from asteroid.masknn.convolutional import Conv1DBlock
 
 
 class PositionalEncoding(nn.Module):
@@ -92,13 +49,10 @@ class TCN(nn.Module):
     def __init__(self, in_chan=256, out_chan_tcn=1, n_blocks=5, n_repeats=3,
                  bn_chan=64, hid_chan=128,  kernel_size=3,
                  norm_type="gLN",
-                 dropout=0.0,
                  chunk=200,
                  stride=40,
-                 e2e=False,
-                 fb_ksz=64,
-                 fb_stride=32,
-                 samplerate=16000):
+                 ):
+
         super(TCN, self).__init__()
         self.in_chan = in_chan
         self.out_chan_tcn = out_chan_tcn
@@ -110,11 +64,7 @@ class TCN(nn.Module):
         self.norm_type = norm_type
         self.chunk = chunk
         self.stride = stride
-        self.e2e = e2e
 
-        if self.e2e:
-            self.fbank, _ = make_enc_dec("analytic_free", in_chan, fb_ksz, fb_stride, samplerate)
-            in_chan = in_chan // 2
         self.in_norm = norms.get(norm_type)(in_chan)
         self.bottleneck = nn.Sequential(nn.Conv1d(in_chan, bn_chan, 1))
         # Succession of Conv1DBlock with exponentially increasing dilation.
@@ -125,21 +75,13 @@ class TCN(nn.Module):
                 padding = (kernel_size - 1) * 2**x // 2
                 res_blocks.append(Conv1DBlock(bn_chan, hid_chan,
                                             kernel_size, padding=padding,
-                                            dilation=2**x, norm_type=norm_type, dropout=dropout))
+                                            dilation=2**x, norm_type=norm_type))
 
-            # here TAC
-            #res_blocks.append(TAC(bn_chan))
             self.TCN.append(res_blocks)
 
-        #self.dropout = nn.Dropout(0.5)
-       # self.out_lstm = torch.nn.LSTM(bn_chan, bn_chan, dropout=dropout,
-        #@                              batch_first=True, bidirectional=True)
-        #out_act = nn.Conv1d(bn_chan, bn, 1)
-        self.out = nn.Sequential(nn.PReLU(), nn.Conv1d(bn_chan, 1, 1))#nn.Linear(2*bn_chan, 1)
-        # Get activation function.
-        #self.blstm = torch.nn.LSTM(out_chan_tcn*2)
+        self.out = nn.Sequential(nn.PReLU(), nn.Conv1d(bn_chan, 1, 1))
 
-    def forward(self, x, lens=None):
+    def forward(self, x):
         """
         Args:
             mixture_w (:class:`torch.Tensor`): Tensor of shape
@@ -148,22 +90,11 @@ class TCN(nn.Module):
             :class:`torch.Tensor`:
                 estimated mask of shape [batch, n_src, n_filters, n_frames]
         """
-        if self.e2e:
-            b, mics, frames = x.size()
-            x = x.reshape(b*mics, frames)
 
-            x = take_mag(self.fbank(x)) ** (1 / 3)
-            _, chans, frames = x.size()
-        else:
-            b, mics, chans, frames = x.size()
-            x = x.reshape(b * mics, chans, frames)
-
+        b, mics, chans, frames = x.size()
+        x = x.reshape(b * mics, chans, frames)
 
         if not self.training:
-            #if frames < self.chunk:
-             #   x = torch.nn.functional.pad(x, ((0, self.chunk-frames)), mode="constant")
-
-
 
             x = torch.nn.functional.unfold(
             x.unsqueeze(-1),
@@ -175,9 +106,7 @@ class TCN(nn.Module):
             n_chunks = x.shape[-1]
             x = x.reshape(b*mics, chans, self.chunk, n_chunks).permute(0, 3, 1, 2).reshape(b*mics*n_chunks, chans, self.chunk)
 
-        #x = take_mag(self.fbank(x)) ** (1 / 3)
         x = self.in_norm(x)
-
 
         x = self.bottleneck(x)
         for i in range(len(self.TCN)):
