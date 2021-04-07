@@ -3,8 +3,8 @@ from setuptools import setup
 setup(
     name="micrank",
     version="0.1.0",
-    description="Sound Event Detection and Separation in Domestic Environments.",
-    author="DCASE2021 Task 4 Organizers",
+    description="Learning to Rank techniques for Channel Selection and Ranking",
+    author="Samuele Cornell",
     author_email="cornellsamuele@gmail.com",
     license="MIT",
     packages=["micrank"],

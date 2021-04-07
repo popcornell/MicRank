@@ -1,7 +1,0 @@
-setup.py
-micrank/__init__.py
-micrank/metrics.py
-micrank.egg-info/PKG-INFO
-micrank.egg-info/SOURCES.txt
-micrank.egg-info/dependency_links.txt
-micrank.egg-info/top_level.txt

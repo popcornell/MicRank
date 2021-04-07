@@ -1,7 +1,11 @@
 from torch import nn
 from asteroid.masknn import norms
 import torch
-
+import math
+from asteroid_filterbanks import make_enc_dec
+from asteroid_filterbanks.transforms import take_mag
+import torchaudio
+from asteroid
 
 class Conv1DBlock(nn.Module):
     """One dimensional convolutional block, as proposed in [1].
@@ -46,6 +50,25 @@ class Conv1DBlock(nn.Module):
         return res_out
 
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.0, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.transpose(0, 1).unsqueeze(0)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+
+        x = x + self.pe[..., : x.size(-1)]
+        return self.dropout(x)
 
 class TCN(nn.Module):
     """ Temporal Convolutional network used in ConvTasnet.
@@ -66,23 +89,34 @@ class TCN(nn.Module):
             ``'cLN'``.
         mask_act (str, optional): Which non-linear function to generate mask.
     """
-    def __init__(self, in_chan, out_chan=1, n_blocks=5, n_repeats=3,
+    def __init__(self, in_chan=256, out_chan_tcn=1, n_blocks=5, n_repeats=3,
                  bn_chan=64, hid_chan=128,  kernel_size=3,
-                 norm_type="gLN", dropout=0.0):
+                 norm_type="gLN",
+                 dropout=0.0,
+                 chunk=200,
+                 stride=40,
+                 e2e=False,
+                 fb_ksz=64,
+                 fb_stride=32,
+                 samplerate=16000):
         super(TCN, self).__init__()
         self.in_chan = in_chan
-        out_chan = out_chan if out_chan else in_chan
-        self.out_chan = out_chan
+        self.out_chan_tcn = out_chan_tcn
         self.n_blocks = n_blocks
         self.n_repeats = n_repeats
         self.bn_chan = bn_chan
         self.hid_chan = hid_chan
         self.kernel_size = kernel_size
         self.norm_type = norm_type
+        self.chunk = chunk
+        self.stride = stride
+        self.e2e = e2e
 
-        layer_norm = norms.get(norm_type)(in_chan)
-        bottleneck_conv = nn.Conv1d(in_chan, bn_chan, 1)
-        self.bottleneck = nn.Sequential(layer_norm, bottleneck_conv)
+        if self.e2e:
+            self.fbank, _ = make_enc_dec("analytic_free", in_chan, fb_ksz, fb_stride, samplerate)
+            in_chan = in_chan // 2
+        self.in_norm = norms.get(norm_type)(in_chan)
+        self.bottleneck = nn.Sequential(nn.Conv1d(in_chan, bn_chan, 1))
         # Succession of Conv1DBlock with exponentially increasing dilation.
         self.TCN = nn.ModuleList()
         for r in range(n_repeats):
@@ -97,11 +131,15 @@ class TCN(nn.Module):
             #res_blocks.append(TAC(bn_chan))
             self.TCN.append(res_blocks)
 
-        out_conv = nn.Conv1d(bn_chan, out_chan, 1)
-        self.out = nn.Sequential(nn.PReLU(), out_conv)
+        #self.dropout = nn.Dropout(0.5)
+       # self.out_lstm = torch.nn.LSTM(bn_chan, bn_chan, dropout=dropout,
+        #@                              batch_first=True, bidirectional=True)
+        #out_act = nn.Conv1d(bn_chan, bn, 1)
+        self.out = nn.Sequential(nn.PReLU(), nn.Conv1d(bn_chan, 1, 1))#nn.Linear(2*bn_chan, 1)
         # Get activation function.
+        #self.blstm = torch.nn.LSTM(out_chan_tcn*2)
 
-    def forward(self, mixture_w, lens=None):
+    def forward(self, x, lens=None):
         """
         Args:
             mixture_w (:class:`torch.Tensor`): Tensor of shape
@@ -110,29 +148,49 @@ class TCN(nn.Module):
             :class:`torch.Tensor`:
                 estimated mask of shape [batch, n_src, n_filters, n_frames]
         """
-        b, mics, chans, frames = mixture_w.size()
-        mixture_w = mixture_w.reshape(b*mics, chans, frames)
-        output = self.bottleneck(mixture_w)
+        if self.e2e:
+            b, mics, frames = x.size()
+            x = x.reshape(b*mics, frames)
+
+            x = take_mag(self.fbank(x)) ** (1 / 3)
+            _, chans, frames = x.size()
+        else:
+            b, mics, chans, frames = x.size()
+            x = x.reshape(b * mics, chans, frames)
+
+
+        if not self.training:
+            #if frames < self.chunk:
+             #   x = torch.nn.functional.pad(x, ((0, self.chunk-frames)), mode="constant")
+
+
+
+            x = torch.nn.functional.unfold(
+            x.unsqueeze(-1),
+            kernel_size=(self.chunk, 1),
+            padding=(self.chunk, 0),
+            stride=(self.stride, 1),
+        )
+
+            n_chunks = x.shape[-1]
+            x = x.reshape(b*mics, chans, self.chunk, n_chunks).permute(0, 3, 1, 2).reshape(b*mics*n_chunks, chans, self.chunk)
+
+        #x = take_mag(self.fbank(x)) ** (1 / 3)
+        x = self.in_norm(x)
+
+
+        x = self.bottleneck(x)
         for i in range(len(self.TCN)):
-            for convs_indx in range(len(self.TCN[i]) - 1):
-                residual = self.TCN[i][convs_indx](output)
-                output = output + residual
-            #tac = self.TCN[i][-1]
-            # apply TAC
-            #_, chans, frames = output.size()
-            #output = output.reshape(b, mics, chans, frames)
-            #output = tac(output)
-            #output = output.reshape(b*mics, chans, frames)
+            for convs_indx in range(len(self.TCN[i])):
+                residual = self.TCN[i][convs_indx](x)
+                x = x + residual
 
-        logits = self.out(output)
+        if not self.training:
+            logits = self.out(x).mean(-1).reshape(b, mics, n_chunks).mean(-1)
+        else:
+            logits = self.out(x).mean(-1).reshape(b, mics)
 
-        # perform mean only on non padded frames
-        if lens is not None:
-            import ipdb
-            ipdb.set_trace()
-            # masked fill
-
-        return logits.mean(-1).squeeze(-1).reshape(b, -1)
+        return logits
 
     def get_config(self):
         config = {
@@ -151,3 +209,4 @@ class TCN(nn.Module):
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+

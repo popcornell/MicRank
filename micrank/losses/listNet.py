@@ -2,9 +2,6 @@ import torch
 import torch.nn.functional as F
 from itertools import permutations
 
-PADDED_Y_VALUE = -1e30
-DEFAULT_EPS=1e-8
-
 
 def sample_good_perms(y_true, l):
 
@@ -29,7 +26,7 @@ def sample_good_perms(y_true, l):
 
 def AdaptiveTopKListNet(y_pred, y_true, l=4):
 
-    assert y_pred.size(0) == 1, "support batch size 1 for now"
+    assert y_pred.size(0) == 1, "Only support batch size 1 for now"
 
     perms = sample_good_perms(y_true[0].detach().cpu().numpy(), l)
 
@@ -52,27 +49,19 @@ def AdaptiveTopKListNet(y_pred, y_true, l=4):
     return tot_losses
 
 
-def listNet(y_pred, y_true, eps=DEFAULT_EPS, padded_value_indicator=PADDED_Y_VALUE):
+def listNet(y_pred, y_true, padded_mask=None):
     """
     ListNet loss introduced in "Learning to Rank: From Pairwise Approach to Listwise Approach".
-    :param y_pred: predictions from the model, shape [batch_size, slate_length]
-    :param y_true: ground truth labels, shape [batch_size, slate_length]
-    :param eps: epsilon value, used for numerical stability
-    :param padded_value_indicator: an indicator of the y_true index containing a padded item, e.g. -1
-    :return: loss value, a torch.Tensor
     """
 
     y_pred = y_pred.clone()
     y_true = y_true.clone()
 
-    mask = y_true == padded_value_indicator
-    y_pred[mask] = float('-inf')
-    y_true[mask] = float('-inf')
+    if padded_mask is not None:
+        y_pred[padded_mask] = float('-inf')
+        y_true[padded_mask] = float('-inf')
 
-    preds_smax = F.softmax(y_pred, dim=1)
     true_smax = F.softmax(y_true, dim=1)
-
-    preds_smax = preds_smax + eps
-    preds_log = torch.log(preds_smax)
+    preds_log = torch.log_softmax(y_pred, dim=1)
 
     return torch.mean(-torch.sum(true_smax * preds_log, dim=1))
