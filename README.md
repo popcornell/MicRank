@@ -38,14 +38,15 @@ Coming Soon
 ---
 
 ## citing MicRank
-If this code has been useful, use this :
+If this code has been useful, use this:
 ```BibTex
-@inproceedings{todo,
-    title={},
-    author={Samuele Cornell and Alessio Brutti and Joris Cosentino and Sunit Sivasankaran and
-            },
-    year={2020},
-    booktitle={},
+@misc{cornell2021learning,
+      title={Learning to Rank Microphones for Distant Speech Recognition}, 
+      author={Samuele Cornell and Alessio Brutti and Marco Matassoni and Stefano Squartini},
+      year={2021},
+      eprint={2104.02819},
+      archivePrefix={arXiv},
+      primaryClass={eess.AS}
 }
 ```
 
