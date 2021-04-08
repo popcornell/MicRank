@@ -1,4 +1,4 @@
-## MicRank: Learning to Rank Microphones for Channel Selection
+## MicRank: Learning to Rank Microphones for Distant Speech Recognition
 
 <div align="center">
 <img src="images/channelselection.png" width="50%">
